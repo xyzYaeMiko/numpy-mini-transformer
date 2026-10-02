@@ -235,7 +235,7 @@ class Transformer:
         grad = clip(gradient, 1.0)
         grad = self.lmh.backward(grad, lr)  # -> (B, L, d_model)
         grad = clip(grad, 1.0)
-        grad = self.ln(grad)
+        grad = self.ln.backward(grad)
         # 重复n个TransformerBlock中回传
         for block in self.blocks:
             grad = block.backward(grad, lr)  # (B, L, d_model) -> (B, L, d_model)
