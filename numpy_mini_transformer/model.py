@@ -153,7 +153,7 @@ class Transformer:
 
         self.d_model = d_model  # 词向量维度
 
-        self.embedding = InputEmbedding(vocab_size, d_model, seed=seed)
+        self.inputembedding = InputEmbedding(vocab_size, d_model, seed=seed)
         self.blocks = [TransformerBlock(d_model, seed=seed + i) for i in range(n_layers)]
         self.ln = LayerNorm(d_model=d_model)
         self.lmh = LMHead(d_model, vocab_size)
@@ -211,7 +211,7 @@ class Transformer:
 
         # 词嵌入 和 注入位置编码
         offset = self._cache_offset() if kv_cache else 0
-        x = self.embedding(input_ids, offset=offset)  # (B, L) -> (B, L, d_model)
+        x = self.inputembedding(input_ids, offset=offset)  # (B, L) -> (B, L, d_model)
 
         for block in self.blocks:
             x = block.forward(x, kv_cache=kv_cache)  # (B, L, d_model) -> (B, L, d_model)
