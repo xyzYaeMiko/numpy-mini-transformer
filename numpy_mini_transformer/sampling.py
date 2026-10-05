@@ -28,7 +28,7 @@ def top_p_filter(logits, p):
     return np.log(out + 1e-12)  # 转回 logits
 
 
-def sample(logits, temperature=1.0, top_k=None, top_p=None):
+def sample(logits, temperature=1.0, top_k=None, top_p=None) -> np.ndarray:
     """
     :param top_p:
     :param top_k:
@@ -39,13 +39,13 @@ def sample(logits, temperature=1.0, top_k=None, top_p=None):
     if temperature != 1.0:
         logits = logits / temperature
 
-    logits = top_k_filter(logits, top_k)
-    logits = top_p_filter(logits, top_p)
+    logits = top_k_filter(logits, top_k)  # 抓取top_k
+    logits = top_p_filter(logits, top_p)  # 抓取top_p
 
     probs = softmax(logits)  # (B, V)
     B, V = probs.shape
 
-    rng = np.random.default_rng()
+    rng = np.random.default_rng(0)   # 固定种子, 也可选择不固定
     next_ids = np.array([
         rng.choice(V, p=probs[b]) for b in range(B)
     ])
@@ -54,7 +54,9 @@ def sample(logits, temperature=1.0, top_k=None, top_p=None):
 
 def softmax(logits_last):
     """
-    种把任意实数向量转换成概率分布的函数
+    x = x - max(x) # 将其限制在负
+    x = exp(x)  # 指数放大差距（更容易采样）
+    y = x / Σx  # 归一化
     :param logits_last:(B, vocab_size)
     :return probs:(B, vocab_size)
     """

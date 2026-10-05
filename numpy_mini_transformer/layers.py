@@ -3,6 +3,7 @@ import numpy as np
 
 class LayerNorm:
     """
+    归一化层
     对每个 token 的 d_model维向量，单独减均值、除标准差，再用可学习的 γ,β 缩放平移。
     稳定训练的组件
     """
@@ -15,22 +16,33 @@ class LayerNorm:
         self.x_hat = None
         self.std = None
 
-    def get_w(self):
+    def get_w(self) -> np.ndarray:
+        """
+        获取γ,β参数（一维）
+
+        :return (d_model * 2, .)
+        """
         return np.concatenate([self.gamma.ravel(), self.beta.ravel()])
 
     def set_w(self, ws: np.ndarray):
+        """
+        设置γ,β参数
+
+         :param ws: (d_model * 2, )
+        """
         n = self.gamma.size
         self.gamma = ws[:n].reshape(self.gamma.shape)
         self.beta = ws[n:2 * n].reshape(self.beta.shape)
 
         self.x_hat = None
 
-    def __call__(self, x: np.ndarray):
+    def forward(self, x: np.ndarray) -> np.ndarray:
         """
+        前向传播
+
         μ  = (1/d) * Σ_{i=1}^d x_i
         σ = (1/d) * Σ_{i=1}^d (x_i - μ)^2
         y_i = γ_i * (x_i - μ) / sqrt(σ) + β
-
         :param x: (B, L, d_model)
         :return:-> (B, L, d_model)
         """
@@ -44,8 +56,9 @@ class LayerNorm:
             var + self.eps)  # ((B, L, d_model) - (B, L, 1（广播）)) -> (B, L, d_modle)) / (B, L, 1（广播）) -> (B, L, d_model)
         return self.gamma * self.x_hat + self.beta  # -> (B, L, d_model)
 
-    def backward(self, gradient: np.ndarray, lr: float):
+    def backward(self, gradient: np.ndarray, lr: float) -> np.ndarray:
         """
+        反向
 
         :param gradient: (B, L, d_model)
         :param lr:
@@ -68,11 +81,10 @@ class LayerNorm:
 class FFN:
     """
     Transformer 中的前馈神剑网络, 一个双层全连接神经网络
-    将注意力输出的d_v（d_model）维向量 变换成 d_model 维的向量
     用于学习 token 语义
     """
 
-    def __init__(self, input_size: int, hidden_size: int = None, ouput_size: int = None, seed=0):
+    def __init__(self, input_size: int, hidden_size: int = None, output_size: int = None, seed=0):
         """
 
         :param input_size: d_v, 与注意力输出向量维度一致
@@ -81,7 +93,7 @@ class FFN:
         :param seed:
         """
         h_size = hidden_size or 4 * input_size
-        o_size = ouput_size or input_size
+        o_size = output_size or input_size
 
         rng = np.random.default_rng(seed)
         s = 1.0 / np.sqrt(input_size)
@@ -99,7 +111,7 @@ class FFN:
     def ReLU(x: np.ndarray):
         return np.maximum(x, 0)
 
-    def get_w(self):
+    def get_w(self) -> np.ndarray:
         return np.concatenate([
             self.W_ih.ravel(), self.b_h.ravel(),
             self.W_ho.ravel(), self.b_o.ravel()
@@ -112,8 +124,9 @@ class FFN:
             p[...] = ws[idx:idx + n].reshape(p.shape)
             idx += n
 
-    def forward(self, x: np.ndarray):
+    def forward(self, x: np.ndarray) -> np.ndarray:
         """
+        前向传播
 
         :param x: (B, L, d_v)
         :return:(B, L, d_model)
@@ -126,12 +139,13 @@ class FFN:
         x = x @ self.W_ho + self.b_o  # (B, L, h_size) @ (h_size, d_model) + (d_model) -> (B, L, d_model)
         return x  # (B, L, d_model)
 
-    def backward(self, gradient: np.ndarray, lr: float):
+    def backward(self, gradient: np.ndarray, lr: float) -> np.ndarray:
         """
+        反向传播
 
         :param gradient: (B, L, d_model)
         :param lr:
-        :return:
+        :return: (B, L, d_model)
         """
 
         dw_ho = np.einsum('blh,bld->hd', self.w_ho_pre, gradient)  # (B, d_model, L) @ (B, L, d_model) -> (L, d_model)

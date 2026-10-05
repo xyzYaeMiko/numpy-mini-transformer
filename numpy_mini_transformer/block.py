@@ -5,7 +5,7 @@ from .loss import clip
 
 
 class TransformerBlock:
-    """LayerNorm → 多头自注意力 → 残差 → LayerNorm → FFN → 残差"""
+    """LayerNorm → 自注意力 → 残差 → LayerNorm → FFN → 残差"""
 
     def __init__(self, d_model: int, seed=0):
         self.att = SingleHeadAttention(d_model, seed=seed)
@@ -13,7 +13,10 @@ class TransformerBlock:
         self.ln2 = LayerNorm(d_model)
         self.ffn = FFN(d_model, seed=seed)
 
-    def get_w(self):
+    def get_w(self) -> np.ndarray:
+        """
+        获取权重（一维）
+        """
         return np.concatenate([
             self.att.get_w(),
             self.ln1.get_w(),
@@ -22,36 +25,43 @@ class TransformerBlock:
         ])
 
     def set_w(self, ws: np.ndarray):
+        """
+        设置权重， （一维）
+
+        :param ws: 一维向量
+        """
         idx = 0
         for m in [self.att, self.ln1, self.ln2, self.ffn]:
             n = m.get_w().size
             m.set_w(ws[idx:idx + n])
             idx += n
 
-    def forward(self, x: np.ndarray, kv_cache: bool = False):
+    def forward(self, x: np.ndarray, kv_cache: bool = False) -> np.ndarray:
         """
+        前向传播
+
         x -> ln ->att+x -> ln ->ffn+x ->out
         └------------↗   └---------↗
         :param kv_cache: 将参数传给注意力
         :param x: 词嵌入矩阵（包含位置编码的词向量矩阵） (B, L, d_model)
-        :return:(B, L, d_model)
+        :return: (B, L, d_model)
         """
-
-        x = x + self.att.forward(self.ln1(x), kv_cache=kv_cache)  # (B, L, d_model) + (B, L, d_model) -> (B, L, d_model)
+        x = x + self.att.forward(self.ln1.forward(x), kv_cache=kv_cache)  # (B, L, d_model) + (B, L, d_model) -> (B, L, d_model)
         # 其他头计算
         # 合并多头结果
 
-        x = x + self.ffn.forward(self.ln2(x))  # (B, L, d_model) + (B, L, d_model) -> (B, L, d_model)
+        x = x + self.ffn.forward(self.ln2.forward(x))  # (B, L, d_model) + (B, L, d_model) -> (B, L, d_model)
         return x  # (B, L, d_model)
 
-    def backward(self, gradient: np.ndarray, lr: float):
+    def backward(self, gradient: np.ndarray, lr: float) -> np.ndarray:
         """
+        反向传播
 
         :param gradient: (B, L, d_model)
         :param lr:
-        :return:
+        :return: (B, L, d_model)
         """
-        g_ffn_in = clip(gradient, 1.0)  # 或 clip(gradient, 5.0)
+        g_ffn_in = clip(gradient, 1.0)
         g_ffn_out = self.ffn.backward(g_ffn_in, lr)  # ->(B, L, d_model)
         g_ln2_in = clip(g_ffn_out, 1.0)
         g_ln2_out = self.ln2.backward(g_ln2_in, lr)  # -> (B, L, d_model)

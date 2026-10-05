@@ -41,7 +41,7 @@ class SingleHeadAttention:
         self.v_pre = None
 
     @staticmethod
-    def softmax(x: np.ndarray, axis=-1):
+    def softmax(x: np.ndarray, axis=-1) -> np.ndarray:
         """
         减去最大值再取 exp，避免 exp(大数) 溢出。
         """
@@ -49,7 +49,7 @@ class SingleHeadAttention:
         e = np.exp(x)
         return e / e.sum(axis=axis, keepdims=True)
 
-    def scaled_dot_product_attention(self, Q: np.ndarray, K: np.ndarray, V: np.ndarray, mask=None):
+    def scaled_dot_product_attention(self, Q: np.ndarray, K: np.ndarray, V: np.ndarray, mask=None) -> np.ndarray:
         """
                 缩放点积注意力（核心公式）
         Attention(Q,K,V) = softmax(Q K^T / sqrt(d_k)) V
@@ -60,7 +60,7 @@ class SingleHeadAttention:
         :param K: (B, S, d_k)  健
         :param V: (B, S, d_v)  值
         :param mask: (B, L, S) 的 bool 数组，True = 保留，False = 屏蔽
-        :return: out, attn  # (B, L, d_v)  (B, L, S)
+        :return: out # (B, L, d_v)
         """
         d_k = Q.shape[-1]
 
@@ -72,9 +72,9 @@ class SingleHeadAttention:
         attn = SingleHeadAttention.softmax(scores, axis=-1)  # 每一行和为 1
         self.v_pre = attn
         out = attn @ V  # (B, L, S) @ (B, S, d_v) -> (B, L, d_v)
-        return out  # (B, L, d_v)  (B, L, S)
+        return out  # (B, L, d_v)
 
-    def get_w(self):
+    def get_w(self) -> np.ndarray:
         """
         将所有参数展平后拼接成一个一维向量。
         """
@@ -96,6 +96,7 @@ class SingleHeadAttention:
     def update_cache(self, K_new: np.ndarray, V_new: np.ndarray):
         """
         每个对话（batch）的单个token的键&值向量
+
         :param K_new: (B, 1, d_model)
         :param V_new: (B, 1, d_model)
         :return:
@@ -111,16 +112,33 @@ class SingleHeadAttention:
         self.K_cache = None
         self.V_cache = None
 
-    def forward(self, x: np.ndarray, mask=None, kv_cache: bool = False):
+    def get__kv_cache(self) -> np.ndarray:
         """
+        :return (2, B, L, d_k)  if d_v == d_k
+        """
+        return np.array([self.K_cache, self.V_cache])
+
+    def set__kv_cache(self, kv_cache: np.ndarray):
+        """
+        :param kv_cache: [k_cache, v_cache]  (2, B, L, d_k)
+        """
+        assert kv_cache.shape[0] == 2
+
+        self.K_cache = kv_cache[0]
+        self.V_cache = kv_cache[1]
+
+    def forward(self, x: np.ndarray, mask=None, kv_cache: bool = False) -> np.ndarray:
+        """
+         前向传播
 
         :param x: (B, L, d_model)
         :param mask:
+        :param kv_cache: bool 是否启用KV缓存
         :return: out: (B, L, d_model)
         """
 
         if kv_cache and self.K_cache is not None:  # 在KV缓存模式且存在缓存时
-            return self.KV_cache(x)  # (B ,1 ,d_model) -> (B, 1, d_model)
+            return self._KV_cache(x)  # (B ,1 ,d_model) -> (B, 1, d_model)
         # 在kv缓存模式下， 当初次输入时，走全注意力，
         # 在kv缓存模式下， 当再次输入时，走分支（将新token并入缓存，然后全部过一遍（没有因果（输出只与最后一个token相关）））
 
@@ -137,17 +155,16 @@ class SingleHeadAttention:
             causal_mask = np.tril(np.ones((L, S), dtype=bool))  # 下三角
             mask = causal_mask if mask is None else (mask & causal_mask)
         self.mask = mask
-        out = self.scaled_dot_product_attention(self.Q, self.K, self.V, mask)
+        out = self.scaled_dot_product_attention(self.Q, self.K, self.V, mask)  # -> (B, L, d_v)
         self.w_o_pre = out
-        out = out @ self.W_o  # (B, L, d_v) @ (d_v, d_model)
+        out = out @ self.W_o  # (B, L, d_v) @ (d_v, d_model) -> (B, L, d_model)
         return out
 
-    def KV_cache(self, x_new: np.ndarray):
+    def _KV_cache(self, x_new: np.ndarray) -> np.ndarray:
         """
-            :param x_new:(B, 1, d_model)  , 初次输入时为(B, L, d_model)
+            :param x_new:(B, 1, d_model)  , 初次输入时为(B, L, d_model), 再次输入多token时为(B, input_token_num, d_model)
             :return:out: (B, 1, d_model)
         """
-
         Q_new = x_new @ self.W_q  # (B, 1, d_model) @ (d_model, d_k) -> (B, 1, d_k) # 对于单一对话，获得了一个d_k维的查询向量
         K_new = x_new @ self.W_k  # (B, 1, d_model) @ (d_model, d_k) -> (B, 1, d_k) #  对于单一对话，获得了一个d_k维的键向量
         V_new = x_new @ self.W_v  # (B, 1, d_model) @ (d_model, d_v) -> (B, 1, d_v) #  对于单一对话，获得了一个d_v维的值向量
@@ -158,39 +175,38 @@ class SingleHeadAttention:
         out = out @ self.W_o  # (B, 1, d_v) @ (d_v, d_model) -> (B, 1, d_model) # 将相关性向量变为词向量，每个对话的最后一个词向量（注意力后的）
         return out
 
-    def backward(self, gradient: np.ndarray, lr: float):
+    def backward(self, gradient: np.ndarray, lr: float) -> np.ndarray:
         """
+        反向传播
 
         :param gradient: (B, L, d_model)
         :param lr:
-        :return:
-
-
+        :return:(B, L, d_model)
         """
         # out = out_pre @ W_o
         dW_o = np.einsum('blv,bld->vd', self.w_o_pre, gradient)
-        g_out_pre = gradient @ self.W_o.T  # (B, L, d_model) @ (d_model, d_model) ->(B, L, d_v（d_model）)
+        g_out_pre = gradient @ self.W_o.T  # (B, L, d_model) @ (d_model, d_v) -> (B, L, d_v（d_model）)
 
         # out_pre = attn @ V
-        dattn = g_out_pre @ self.V.swapaxes(-1, -2)  # (B, L, d_model) @ (B, d_model, L) -> (B, L, S（L）)
-        g_v_pre = self.v_pre.swapaxes(-1, -2) @ g_out_pre  # (B, L, S（L）) @ (B, L, d_model) ->(B, L, d_model)
+        g_v_pre = self.v_pre.swapaxes(-1, -2) @ g_out_pre  # (B, S（L）, L) @ (B, L, d_v) -> (B, S, d_v)
+        dattn = g_out_pre @ self.V.swapaxes(-1, -2)  # (B, L, d_v) @ (B, d_v, S（L）) -> (B, L, S（L）)
 
         # softmax 反向
         dscores = self.v_pre * (dattn - (dattn * self.v_pre).sum(-1, keepdims=True))
         if self.mask is not None:
             dscores = dscores * self.mask
-        dscores /= np.sqrt(self.d_k)  # ->(B, L, d_model)
+        dscores /= np.sqrt(self.d_k)  # ->(B, L, S)
 
         # scores = Q @ K^T
         g_q_pre = dscores @ self.K  # (B, L, d_k)
-        g_k_pre = dscores.swapaxes(-1, -2) @ self.Q  # (B, L, d_k)
+        g_k_pre = dscores.swapaxes(-1, -2) @ self.Q  # (B, S, L) @ (B, L, d_k) -> (B, S, d_k)
 
         # Q = x W_q, K = x W_k, V = x W_v
         dW_q = np.einsum('bld,blk->dk', self.x, g_q_pre)
         dW_k = np.einsum('bld,blk->dk', self.x, g_k_pre)
         dW_v = np.einsum('bld,blv->dv', self.x, g_v_pre)
 
-        dx = g_q_pre @ self.W_q.T + g_k_pre @ self.W_k.T + g_v_pre @ self.W_v.T
+        dx = g_q_pre @ self.W_q.T + g_k_pre @ self.W_k.T + g_v_pre @ self.W_v.T  # -> (B, L, d_model)
 
         self.W_q -= lr * dW_q
         self.W_k -= lr * dW_k

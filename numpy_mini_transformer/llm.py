@@ -89,7 +89,7 @@ class LLM:
     def __init__(self, system_content: str = "你是一个ai助手", B: int = 1, d_model: int = 16, temperature: int = 0.8,
                  seed=0, n_layers: int = 6,
                  vocab_size: int = None,
-                 tokenizer: Tokenizer | None = None,  # ← 注入
+                 tokenizer: Tokenizer | None = None,
                  ):
         """
         初始化 LLM 实例。
@@ -108,6 +108,7 @@ class LLM:
             TransformerBlock 层数，默认为 6。
         :param vocab_size:int or None, optional 词表大小。若为 None，则使用 tiktoken 的 cl100k_base 词表大小。
         """
+
         self.temperature = temperature
         self.B = B  # 该参数与学习无关
         self.system_content = system_content
@@ -180,9 +181,10 @@ class LLM:
             batch.append(self.tokenizer.encode(text))
         return batch
 
-    def get_w(self):
+    def get_w(self) -> np.ndarray:
         """
         获取 transformer 权重
+
         :return: 权重（一维）
         """
         return self.transformer.get_w()
@@ -190,6 +192,7 @@ class LLM:
     def set_w(self, ws: np.ndarray):
         '''
           设置 Transformer 的权重。
+
         :param ws: (n, 1)一维数据集 list or np.array
         :return:
         '''
@@ -233,7 +236,7 @@ class LLM:
                  print_m: bool = False,
                  kv_cache: bool = True,
                  max_new_tokens: int = 1000
-                 ):
+                 ) -> list[str]:
         """
         执行聊天生成。
 
@@ -243,7 +246,7 @@ class LLM:
                              为 True 时每步只输入新 token 的向量；
                             为 False 时拼接完整序列。
         :param max_new_tokens: 单次回复最大输出token
-        :return:
+        :return: 模型输出（仅第一层block）
         """
         "====上下文管理===="
         if type(text) == str:
@@ -271,7 +274,7 @@ class LLM:
         out_tokens_num = 0
         input_ids = ai_in_token_id  # （B, L)
         while True:
-            "input_ids 将保证ai上下文的跟新。 messages作为记录，用户接口和当前聊天气泡外的上下文存储"
+            "input_ids 将保证transformer上下文的跟新。 messages作为记录，用户接口和当前聊天气泡外的上下文存储"
             logits = self.transformer.forward(input_ids=input_ids,
                                               kv_cache=kv_cache)  # (B, L, d_model) -> (B, L, vocab_size)
 
@@ -304,19 +307,19 @@ class LLM:
             print('')
         return [mg[-1]['content'] for mg in self.messages]
 
-    def learn(self, token_ids: np.ndarray, lr: float = 1e-3):
+    def learn(self, token_ids: np.ndarray, lr: float = 1e-3) -> float:
         """
         执行单步训练。
         :param token_ids: (B, L+1)  np数组  该数据的B层数量决定训练时的B层数
         :param lr: float 学习率
-        :return:
+        :return: loss 损失
         """
         input_ids = token_ids[:, :-1]  # (B, L)
         target_ids = token_ids[:, 1:]  # (B, L)
         # 前向传播(记录必要的部分)
         logits = self.transformer.forward(input_ids=input_ids)  # -> (B, L, vocab_size)
         # 计算损失和梯度
-        loss, gradient = cross_entropy_loss(logits=logits, targets=target_ids)  # -> floor  (B, L, vocab_size)
+        loss, gradient = cross_entropy_loss(logits=logits, targets=target_ids)  # -> float  (B, L, vocab_size)
         # 反向传播
         self.transformer.backward(input_ids=input_ids, gradient=gradient, lr=lr)
         return loss

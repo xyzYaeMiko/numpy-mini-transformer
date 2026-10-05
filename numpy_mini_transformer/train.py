@@ -1,24 +1,26 @@
 # train.py
 import numpy as np
 import matplotlib.pyplot as plt
+from .llm import LLM
 
 def train(
-        model,
+        model: LLM,
         batch_id: np.ndarray,
         lr=1e-3,
         steps: int = 1,
         ax: plt.axes = None,
         print_step: bool = True
 
-):
+) -> list:
     """
     一个简易的文本训练循环， 会对固定几个（B）文本拟合
+
     :param model: LLM 类
     :param batch_id: (B, L)  np数组对象
     :param lr:  学习率
     :param steps: 训练次数
     :param ax: plt子图对象
-    :return: 损失列表
+    :return: 训练过程的损失列表
     """
     loss_ls = []
     for step in range(steps):
