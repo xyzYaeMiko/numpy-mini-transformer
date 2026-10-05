@@ -70,7 +70,7 @@ class InputEmbedding:
         pe[:, 1::2] = np.cos(angle[:, 1::2])
         return pe
 
-    def get_w(self):
+    def get_w(self) -> np.ndarray:
         return self.vocab.ravel()
 
     def set_w(self, ws: np.ndarray):
