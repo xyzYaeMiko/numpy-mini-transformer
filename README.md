@@ -9,12 +9,6 @@
 - 支持 top-k / top-p / temperature 采样
 - 兼容 tiktoken 的 cl100k_base 编码器
 
-## 安装
-pip install -r requirements.txt
-
-## 运行
-python mini_transformer.py
-
 ## 说明
 纯玩具项目
 不能训练真正的 LLM。
