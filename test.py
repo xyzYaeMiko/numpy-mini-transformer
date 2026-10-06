@@ -1,26 +1,24 @@
-from numpy_min_transformer import *
+from numpy_mini_transformer import *
 import time
 import tiktoken
 import matplotlib.pyplot as plt
 import numpy as np
 if __name__ == "__main__":
-    TEXT = """
-    时间流逝吧，你是多么残酷。时间停止吧，你是多么美丽。
-    """
+    text = '自然语言处理很有趣。深度学习改变了世界。'
 
     print("=======tset========")
     model = LLM(d_model=32, n_layers=2)  # 使用初始词库
     print("\n输出测试（KV_cache=F）")
     print(">>> out1 = model(text=TEXT, kv_cache=False)")
     t1 = time.time()
-    out1 = model(text=TEXT, kv_cache=False)
+    out1 = model(text=text, kv_cache=False)
     t2 = time.time()
     print(model.messages)
     model.clear_content()
     print("\n输出测试（KV_cache=T）")
     print(">>> out2 = model(text=TEXT, kv_cache=True)")
     t3 = time.time()
-    out2 = model(text=TEXT, kv_cache=True)
+    out2 = model(text=text, kv_cache=True)
     t4 = time.time()
     print(model.messages)
 
@@ -69,13 +67,9 @@ if __name__ == "__main__":
     ax.legend()
 
     enc = tiktoken.get_encoding("cl100k_base")
-    text = '自然语言处理很有趣。深度学习改变了世界。'
     raw_ids = enc.encode(text)
     B = np.array([raw_ids, raw_ids, raw_ids, raw_ids])
-    loss_ls = train(model=model, batch_id=B, steps=1000, ax=ax, lr=1e-3)
-    print('\n', 'KV_cache=True')
-    model(text='自然', kv_cache=True, print_m=True)
-    print('\n', 'KV_cache=False')
-    model.clear_content()
-    model(text='自然', kv_cache=False, print_m=True)
+    loss_ls = train(model=model, micro_batches=[B, B, B], steps=10000, ax=ax, lr=1e-2)
+    print(model.test_run(text='自然'))
+
 
