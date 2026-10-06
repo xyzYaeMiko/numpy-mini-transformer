@@ -47,6 +47,8 @@ class InputEmbedding:
         self.vocab = rng.normal(0, s, (vocab_size, d_model))  # (V, d_model)
         self.d_model = d_model
 
+        self.dvocab = np.zeros_like(self.vocab)
+
     def positional_encoding(self, L: int, offset: int = 0):
         """
         生成位置编码
@@ -70,7 +72,7 @@ class InputEmbedding:
         pe[:, 1::2] = np.cos(angle[:, 1::2])
         return pe
 
-    def get_w(self) -> np.ndarray:
+    def get_w(self):
         return self.vocab.ravel()
 
     def set_w(self, ws: np.ndarray):
@@ -88,20 +90,31 @@ class InputEmbedding:
         pe = self.positional_encoding(token_ids.shape[1], offset)  # 生成位置编码
         return x + pe
 
-    def backward(self, token_ids: np.ndarray, gradient: np.ndarray, lr: float) -> np.ndarray:
+    def backward(self, token_ids: np.ndarray, gradient: np.ndarray) -> np.ndarray:
         """
         词表反向：把每个 token 位置的梯度累加回词表对应行
 
         :param token_ids: (B, L) int
         :param gradient:  (B, L, d_model)
         """
-        dvocab = np.zeros_like(self.vocab)
-        np.add.at(dvocab, token_ids.ravel(), gradient.reshape(-1, self.d_model))
-        self.vocab -= lr * dvocab
+        np.add.at(self.dvocab, token_ids.ravel(), gradient.reshape(-1, self.d_model))
+    def update_w(self, lr: float):
+        """
+       跟新词向量
 
+       :param lr: 学习率
+        """
+        self.vocab -= lr * self.dvocab
+
+    def zero_grad(self):
+        """
+        梯度缓存清零
+
+        """
+        self.dvocab[...] = 0
 
 class LMHead:
-    """预言模型输出头"""
+    """语言模型输出头"""
 
     def __init__(self, d_model: int, vocab_size: int, seed=0):
         """
@@ -117,6 +130,9 @@ class LMHead:
         self.b = np.zeros(vocab_size)
 
         self.w_pre = None
+
+        self.dw = np.zeros_like(self.W)
+        self.db = np.zeros_like(self.b)
 
     def get_w(self) -> np.ndarray:
         """
@@ -145,16 +161,15 @@ class LMHead:
         self.w_pre = x  # 记录输入
         return x @ self.W + self.b  # (B, L, vocab_size)
 
-    def backward(self, gradient: np.ndarray, lr: float):
+    def backward(self, gradient: np.ndarray) -> np.ndarray:
         """
-        反向传播
+        反向传播梯度并叠加保存
 
         dL/dW = x^T @ dL/dy  # 用于跟新权重
         dL/db = sum(dL/dy)  # 用于更新偏置
         dL/dx = dL/dy @ W^T  # 沿权重继续吧梯度传给上一个
          (B, L, vocab_size)
         :param gradient: (B, L, vocab_size)
-        :param lr:
         :return: (B, L, d_model)
         """
         # self.x.T @ gradient  # 权重的变化  (B, d_model, L) @ (B, L, vocab_size) -> (d_model, vocab_size)
@@ -162,11 +177,26 @@ class LMHead:
         db = gradient.sum(axis=tuple(range(gradient.ndim - 1)))
         # 将梯度沿权重传递到上一个
         dx = gradient @ self.W.T  # (B, L, vocab_size) @ (vocab_size, d_model) -> (B, L, d_model)
-
-        # 跟新
-        self.W -= lr * dw
-        self.b -= lr * db
+        self.dw += dw
+        self.db += db
         return dx
+
+    def update_w(self, lr: float):
+        """
+       跟新权重
+
+       :param lr: 学习率
+        """
+        self.W -= lr * self.dw
+        self.b -= lr * self.db
+
+    def zero_grad(self):
+        """
+        梯度缓存清零
+
+        """
+        self.dw[...] = 0
+        self.db[...] = 0
 
 
 class Transformer:
@@ -194,6 +224,7 @@ class Transformer:
         logits = model.forward(next_id, kv_cache=True)       # 增量解码（L=1）
         loss.backward(); model.backward(input_ids, grad, lr) # 反向更新
     """
+
     def __init__(self, vocab_size: int, d_model: int, seed=0, n_layers: int = 6,
                  ):
 
@@ -222,7 +253,6 @@ class Transformer:
         获取权重
 
         :param ws 一维
-        :return:
         """
         idx = 0
         # 1. vocab
@@ -257,7 +287,6 @@ class Transformer:
 
         return kv_caches
 
-
     def set_kv_cache(self, kv_cache: list):
         """
         ::param kv_cache: [kv_cache1, kv_cache2, ...]  (block_number, 2,  B, L, d_v（d_k）)
@@ -266,7 +295,6 @@ class Transformer:
         for block in self.blocks:
             block.att.set__kv_cache(kv_cache[i])
             i += 1
-
 
     def _cache_offset(self):
         """当前 KV cache 里的 token 数；无缓存返回 0。只在这一处判断。"""
@@ -303,23 +331,45 @@ class Transformer:
         # KV: (B, 1, vocab_size) 最后一个token的下一个token的概率分布
         return logits  # (B, L, vocab_size)
 
-    def backward(self, input_ids: np.ndarray, gradient: np.ndarray, lr: float):
+    def backward(self, input_ids: np.ndarray, gradient: np.ndarray):
         """
-        反向传播
+        反向传播梯度并叠加保存
 
         input_ids 只用于跟新词向量矩阵。反向传播的核心仅 gradient
         :param input_ids: 前向传播的token id, (B, L)
         :param gradient: 梯度 (B, L, vocab_size)
-        :param lr: 学习率
         """
         grad = clip(gradient, 1.0)
-        grad = self.lmh.backward(grad, lr)  # -> (B, L, d_model)
+        grad = self.lmh.backward(grad)  # -> (B, L, d_model)
         grad = clip(grad, 1.0)
-        grad = self.ln.backward(grad, lr)
+        grad = self.ln.backward(grad)
         # 重复n个TransformerBlock中回传（逆序：反向传播需与前向顺序相反）
         for block in reversed(self.blocks):
-            grad = block.backward(grad, lr)  # (B, L, d_model) -> (B, L, d_model)
+            grad = block.backward(grad)  # (B, L, d_model) -> (B, L, d_model)
         # 跟新词向量矩阵
         # 词嵌入表梯度：把 gradient 累加回对应 id 的行
         grad = clip(grad, 1.0)
-        self.embedding.backward(input_ids, grad, lr)  # 更新词表
+        self.embedding.backward(input_ids, grad)  # 更新词表
+
+    def update_w(self, lr:float):
+        """
+        跟新权重
+
+        :param lr: 学习率
+        """
+        self.lmh.update_w(lr)
+        for block in reversed(self.blocks):
+            block.update_w(lr)
+        self.ln.update_w(lr)
+        self.embedding.update_w(lr)
+
+    def zero_grad(self):
+        """
+        梯度缓存清零
+
+        """
+        self.lmh.zero_grad()
+        for block in reversed(self.blocks):
+            block.zero_grad()
+        self.ln.zero_grad()
+        self.embedding.zero_grad()

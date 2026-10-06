@@ -235,7 +235,7 @@ class LLM:
                  text: str or [str] = '你好',
                  print_m: bool = False,
                  kv_cache: bool = True,
-                 max_new_tokens: int = 1000
+                 max_new_tokens: int = 20
                  ) -> list[str]:
         """
         执行聊天生成。
@@ -273,6 +273,7 @@ class LLM:
 
         out_tokens_num = 0
         input_ids = ai_in_token_id  # （B, L)
+        token = ''
         while True:
             "input_ids 将保证transformer上下文的跟新。 messages作为记录，用户接口和当前聊天气泡外的上下文存储"
             logits = self.transformer.forward(input_ids=input_ids,
@@ -295,31 +296,79 @@ class LLM:
                 # 2) 喂给该 batch 的增量解码器，拿回“能完整解码的部分”
                 next_token = self._decoders[i].decode(raw_bytes)  # 可能是 ''
                 # 3) 更新 messages（只追加已完整的文本）
+                token += next_token
+                if len(token) >= 6:
+                    token = token[-6:]
                 if next_token:
                     self.messages[i][-1]["content"] += next_token
                 if print_m and i == 0 and next_token:
                     print(next_token, end="", flush=True)
 
             out_tokens_num += 1
-            if out_tokens_num >= 300:
+            if out_tokens_num >= max_new_tokens:
+                if print_m:
+                    print(f"超出最大输出限制，输出token数：{out_tokens_num}, 输出限制：{max_new_tokens}")
+                break
+            if token == '<|im_end|>':
                 break
         if print_m:
             print('')
         return [mg[-1]['content'] for mg in self.messages]
 
-    def learn(self, token_ids: np.ndarray, lr: float = 1e-3) -> float:
+    def learn(self, micro_batches: list[np.ndarray], lr: float = 1e-3) -> float:
         """
         执行单步训练。
-        :param token_ids: (B, L+1)  np数组  该数据的B层数量决定训练时的B层数
+        :param micro_batches: [(B, L+1) , ... micro] np数组  该数据的B层数量决定训练时的B层数
         :param lr: float 学习率
         :return: loss 损失
         """
-        input_ids = token_ids[:, :-1]  # (B, L)
-        target_ids = token_ids[:, 1:]  # (B, L)
-        # 前向传播(记录必要的部分)
-        logits = self.transformer.forward(input_ids=input_ids)  # -> (B, L, vocab_size)
-        # 计算损失和梯度
-        loss, gradient = cross_entropy_loss(logits=logits, targets=target_ids)  # -> float  (B, L, vocab_size)
-        # 反向传播
-        self.transformer.backward(input_ids=input_ids, gradient=gradient, lr=lr)
-        return loss
+        # 递归清空所有层
+        k = len(micro_batches)
+        self.transformer.zero_grad()
+        loss_sum = 0
+        token_sum = 0
+        for micro in micro_batches:  # 名义上是分gpu运行
+            n_tokens_in_micro = micro.shape[1]  # 获取token数
+            input_ids = micro[:, :-1]  # (B, L)
+            target_ids = micro[:, 1:]  # (B, L)
+            # 前向传播(记录必要的部分)
+            logits = self.transformer.forward(input_ids=input_ids)  # -> (B, L, vocab_size)
+            # 计算损失和梯度
+            loss, gradient = cross_entropy_loss(logits=logits, targets=target_ids)  # -> float  (B, L, vocab_size)
+            gradient /= k
+            # 反向传播并积累梯度
+            self.transformer.backward(input_ids=input_ids, gradient=gradient)
+
+            loss_sum += loss * n_tokens_in_micro
+            token_sum += n_tokens_in_micro
+        # clip_grad_norm_(transformer, 1.0)
+        self.transformer.update_w(lr)  # 递归更新
+        return loss_sum / token_sum
+
+    def test_run(self, text: str) -> str:
+        """
+        测试用生成：直接对输入文本编码（不做 <|im_start|> 聊天模板格式化），
+        用模型自回归续写，返回「输入 + 续写」解码后的完整文本。
+
+        用于在 learn() 之后，用训练文本的前缀验证模型是否真的学会了续写。
+        与 __call__ 的区别：__call__ 会把输入包装成聊天格式，本函数直接 encode。
+
+        :param text: 输入文本（直接 encode，不套模板）
+        :return: 解码后的完整文本（输入 + 续写）
+        """
+        ids = self.tokenizer.encode(text)
+        input_ids = np.array([ids], dtype=np.int64)  # (1, L)
+
+        self.transformer.clear_kv_cache()
+        gen_ids = list(ids)
+
+        for _ in range(40):  # 最多续写 40 个 token
+            logits = self.transformer.forward(input_ids=input_ids, kv_cache=False)
+            # 取最后一个位置的 logits，贪心取概率最大的下一个 token
+            nxt = int(np.argmax(logits[:, -1, :], axis=-1)[0])
+            gen_ids.append(nxt)
+            input_ids = np.concatenate(
+                [input_ids, np.array([[nxt]], dtype=np.int64)], axis=1
+            )
+
+        return self.tokenizer.decode(gen_ids)

@@ -16,6 +16,9 @@ class LayerNorm:
         self.x_hat = None
         self.std = None
 
+        self.dgamma = np.zeros_like(self.gamma)
+        self.dbeta = np.zeros_like(self.beta)
+
     def get_w(self) -> np.ndarray:
         """
         获取γ,β参数（一维）
@@ -56,26 +59,43 @@ class LayerNorm:
             var + self.eps)  # ((B, L, d_model) - (B, L, 1（广播）)) -> (B, L, d_modle)) / (B, L, 1（广播）) -> (B, L, d_model)
         return self.gamma * self.x_hat + self.beta  # -> (B, L, d_model)
 
-    def backward(self, gradient: np.ndarray, lr: float) -> np.ndarray:
+    def backward(self, gradient: np.ndarray) -> np.ndarray:
         """
-        反向
+        反向传播梯度并叠加保存
 
         :param gradient: (B, L, d_model)
-        :param lr:
         :return: (B, L, d_model)
         """
         axes = tuple(range(gradient.ndim - 1))  #
         dgamma = (gradient * self.x_hat).sum(axis=axes)  # 每个元素的梯度成乘以输入，然后再L轴上求和， 再沿B轴求和 ——> (1, d_model)
         dbeta = gradient.sum(axis=axes)  # 梯度沿L轴求和， 再沿B轴求和 -> (1, dmodel)
+        self.dgamma += dgamma
+        self.dbeta += dbeta
 
         dx_hat = gradient * self.gamma
         m = dx_hat.mean(axis=-1, keepdims=True)
         v = (dx_hat * self.x_hat).mean(axis=-1, keepdims=True)
         dx = (dx_hat - m - self.x_hat * v) / np.maximum(self.std, 1e-5)
 
-        self.gamma -= lr * dgamma
-        self.beta -= lr * dbeta
         return dx  # (B, L, d_model)
+
+    def update_w(self, lr: float):
+        """
+        跟新权重
+
+        :param lr: 学习率
+        """
+        self.gamma -= lr * self.dgamma
+        self.beta -= lr * self.dbeta
+        ...
+
+    def zero_grad(self):
+        """
+        梯度缓存清零
+
+        """
+        self.dgamma[...] = 0
+        self.dbeta[...] = 0
 
 
 class FFN:
@@ -106,6 +126,11 @@ class FFN:
         self.w_ih_per = None
         self.relu_pre = None
         self.w_ho_pre = None
+
+        self.dw_ih = np.zeros_like(self.W_ih)
+        self.db_h = np.zeros_like(self.b_h)
+        self.dw_ho = np.zeros_like(self.W_ho)
+        self.db_o = np.zeros_like(self.b_o)
 
     @staticmethod
     def ReLU(x: np.ndarray):
@@ -139,12 +164,11 @@ class FFN:
         x = x @ self.W_ho + self.b_o  # (B, L, h_size) @ (h_size, d_model) + (d_model) -> (B, L, d_model)
         return x  # (B, L, d_model)
 
-    def backward(self, gradient: np.ndarray, lr: float) -> np.ndarray:
+    def backward(self, gradient: np.ndarray, ) -> np.ndarray:
         """
-        反向传播
+        反向传播梯度并叠加保存
 
         :param gradient: (B, L, d_model)
-        :param lr:
         :return: (B, L, d_model)
         """
 
@@ -159,9 +183,29 @@ class FFN:
         db_h = gh_pre.sum(axis=tuple(range(gh_pre.ndim - 1)))
         dx = gh_pre @ self.W_ih.T  # (B, L, d_model)
 
-        # update
-        self.W_ih -= lr * dw_ih
-        self.b_h -= lr * db_h
-        self.W_ho -= lr * dw_ho
-        self.b_o -= lr * db_o
+        self.dw_ih += dw_ih
+        self.db_h += db_h
+        self.dw_ho += dw_ho
+        self.db_o += db_o
         return dx
+
+    def update_w(self, lr: float):
+        """
+       跟新权重
+
+       :param lr: 学习率
+       """
+        self.W_ih -= lr * self.dw_ih
+        self.b_h -= lr * self.db_h
+        self.W_ho -= lr * self.dw_ho
+        self.b_o -= lr * self.db_o
+
+    def zero_grad(self):
+        """
+        梯度缓存清零
+
+        """
+        self.dw_ih[...] = 0
+        self.db_h[...] = 0
+        self.dw_ho[...] = 0
+        self.db_o[...] = 0

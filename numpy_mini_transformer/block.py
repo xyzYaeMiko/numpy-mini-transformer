@@ -46,32 +46,53 @@ class TransformerBlock:
         :param x: 词嵌入矩阵（包含位置编码的词向量矩阵） (B, L, d_model)
         :return: (B, L, d_model)
         """
-        x = x + self.att.forward(self.ln1.forward(x), kv_cache=kv_cache)  # (B, L, d_model) + (B, L, d_model) -> (B, L, d_model)
+        x = x + self.att.forward(self.ln1.forward(x),
+                                 kv_cache=kv_cache)  # (B, L, d_model) + (B, L, d_model) -> (B, L, d_model)
         # 其他头计算
         # 合并多头结果
 
         x = x + self.ffn.forward(self.ln2.forward(x))  # (B, L, d_model) + (B, L, d_model) -> (B, L, d_model)
         return x  # (B, L, d_model)
 
-    def backward(self, gradient: np.ndarray, lr: float) -> np.ndarray:
+    def backward(self, gradient: np.ndarray) -> np.ndarray:
         """
-        反向传播
+        反向传播梯度并叠加保存
 
         :param gradient: (B, L, d_model)
-        :param lr:
         :return: (B, L, d_model)
         """
         g_ffn_in = clip(gradient, 1.0)
-        g_ffn_out = self.ffn.backward(g_ffn_in, lr)  # ->(B, L, d_model)
+        g_ffn_out = self.ffn.backward(g_ffn_in)  # ->(B, L, d_model)
         g_ln2_in = clip(g_ffn_out, 1.0)
-        g_ln2_out = self.ln2.backward(g_ln2_in, lr)  # -> (B, L, d_model)
+        g_ln2_out = self.ln2.backward(g_ln2_in)  # -> (B, L, d_model)
         g_att_in = clip(g_ln2_out, 1.0)
 
         g_att_in = gradient + g_att_in  # 残差链接
 
-        g_att_out = self.att.backward(g_att_in, lr)  # -> (B, L, d_model)
+        g_att_out = self.att.backward(g_att_in)  # -> (B, L, d_model)
         g_ln1_in = clip(g_att_out, 1.0)  # 或 clip(gradient, 5.0)
-        g_ln1_out = self.ln1.backward(g_ln1_in, lr)  # -> (B, L, d_model)
+        g_ln1_out = self.ln1.backward(g_ln1_in)  # -> (B, L, d_model)
 
         gradient = g_ln1_out + g_att_in  # 残差链接
         return gradient  # -> (B, L, d_model)
+
+    def update_w(self, lr:float):
+        """
+       跟新权重
+
+       :param lr: 学习率
+       """
+        self.ln1.update_w(lr)
+        self.att.update_w(lr)
+        self.ln2.update_w(lr)
+        self.ffn.update_w(lr)
+
+    def zero_grad(self):
+        """
+        梯度缓存清零
+
+        """
+        self.ln1.zero_grad()
+        self.att.zero_grad()
+        self.ln2.zero_grad()
+        self.ffn.zero_grad()

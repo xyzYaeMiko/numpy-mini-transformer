@@ -12,6 +12,8 @@ def softmax_last(x: np.ndarray) -> np.ndarray:
 
 def cross_entropy_loss(logits: np.ndarray, targets: np.ndarray) -> float and np.ndarray:
     """
+    交叉熵损失，返回平均损失和梯度
+
     交叉熵（单标签）： L = -1 * log(p)  p：分布， -1： 目标分布
     梯度:  (p - p_target) / N
     :param logits:  (B, L, V)
@@ -43,7 +45,7 @@ def clip(x: np.ndarray, max_norm: float = 1.0) -> np.ndarray:
     """
     梯度裁切
 
-    输入输出维度一致
+    :return 输入输出维度一致
     """
     n = np.linalg.norm(x)  # 范数  所有元素的平方和取根号,  一维时为向量长度
     if n > max_norm:

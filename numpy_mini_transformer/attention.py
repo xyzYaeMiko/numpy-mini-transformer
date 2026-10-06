@@ -40,6 +40,11 @@ class SingleHeadAttention:
         self.w_o_pre = None
         self.v_pre = None
 
+        self.dW_q = np.zeros_like(self.W_q)
+        self.dW_k = np.zeros_like(self.W_k)
+        self.dW_v = np.zeros_like(self.W_v)
+        self.dW_o = np.zeros_like(self.W_o)
+
     @staticmethod
     def softmax(x: np.ndarray, axis=-1) -> np.ndarray:
         """
@@ -127,6 +132,7 @@ class SingleHeadAttention:
         self.K_cache = kv_cache[0]
         self.V_cache = kv_cache[1]
 
+
     def forward(self, x: np.ndarray, mask=None, kv_cache: bool = False) -> np.ndarray:
         """
          前向传播
@@ -175,16 +181,17 @@ class SingleHeadAttention:
         out = out @ self.W_o  # (B, 1, d_v) @ (d_v, d_model) -> (B, 1, d_model) # 将相关性向量变为词向量，每个对话的最后一个词向量（注意力后的）
         return out
 
-    def backward(self, gradient: np.ndarray, lr: float) -> np.ndarray:
+    def backward(self, gradient: np.ndarray) -> np.ndarray:
         """
-        反向传播
+        反向传播梯度并叠加保存
 
         :param gradient: (B, L, d_model)
-        :param lr:
         :return:(B, L, d_model)
         """
         # out = out_pre @ W_o
+
         dW_o = np.einsum('blv,bld->vd', self.w_o_pre, gradient)
+
         g_out_pre = gradient @ self.W_o.T  # (B, L, d_model) @ (d_model, d_v) -> (B, L, d_v（d_model）)
 
         # out_pre = attn @ V
@@ -206,10 +213,31 @@ class SingleHeadAttention:
         dW_k = np.einsum('bld,blk->dk', self.x, g_k_pre)
         dW_v = np.einsum('bld,blv->dv', self.x, g_v_pre)
 
-        dx = g_q_pre @ self.W_q.T + g_k_pre @ self.W_k.T + g_v_pre @ self.W_v.T  # -> (B, L, d_model)
+        self.dW_q += dW_q
+        self.dW_k += dW_k
+        self.dW_v += dW_v
+        self.dW_o += dW_o
 
-        self.W_q -= lr * dW_q
-        self.W_k -= lr * dW_k
-        self.W_v -= lr * dW_v
-        self.W_o -= lr * dW_o
+        dx = g_q_pre @ self.W_q.T + g_k_pre @ self.W_k.T + g_v_pre @ self.W_v.T  # -> (B, L, d_model)
         return dx
+
+    def update_w(self, lr: float):
+        """
+        跟新参数
+
+        :param lr: 学习率
+        """
+        self.W_q -= lr * self.dW_q
+        self.W_k -= lr * self.dW_k
+        self.W_v -= lr * self.dW_v
+        self.W_o -= lr * self.dW_o
+
+    def zero_grad(self):
+        """
+        梯度缓存清零
+
+        """
+        self.dW_q[...] = 0
+        self.dW_k[...] = 0
+        self.dW_v[...] = 0
+        self.dW_o[...] = 0
