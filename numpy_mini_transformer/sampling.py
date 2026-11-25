@@ -54,9 +54,6 @@ def sample(logits, temperature=1.0, top_k=None, top_p=None) -> np.ndarray:
 
 def softmax(logits_last):
     """
-    x = x - max(x) # 将其限制在负
-    x = exp(x)  # 指数放大差距（更容易采样）
-    y = x / Σx  # 归一化
     :param logits_last:(B, vocab_size)
     :return probs:(B, vocab_size)
     """

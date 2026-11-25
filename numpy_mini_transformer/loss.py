@@ -41,13 +41,4 @@ def cross_entropy_loss(logits: np.ndarray, targets: np.ndarray) -> float and np.
     return loss, dlogits_flat.reshape(B, L, vocab_size)  # floor  (B, L, vocab_size)
 
 
-def clip(x: np.ndarray, max_norm: float = 1.0) -> np.ndarray:
-    """
-    梯度裁切
 
-    :return 输入输出维度一致
-    """
-    n = np.linalg.norm(x)  # 范数  所有元素的平方和取根号,  一维时为向量长度
-    if n > max_norm:
-        x = x * (max_norm / (n + 1e-6))
-    return x

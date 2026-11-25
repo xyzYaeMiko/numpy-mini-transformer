@@ -2,9 +2,10 @@ import tiktoken
 import numpy as np
 from typing import Protocol
 import codecs
-from .model import Transformer
-from .loss import cross_entropy_loss
-from .sampling import sample
+
+from .transformer import Transformer
+from .loss import cross_entropy_loss  # 交叉熵损失
+from .sampling import sample  # 采样器
 
 IM_END_TEMPLATE = "<|im_end|>\n"
 IM_END_LEN = len(IM_END_TEMPLATE)  # 12
